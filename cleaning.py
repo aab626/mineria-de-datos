@@ -9,7 +9,6 @@ df = pd.read_csv('globalterrorismdb_0221dist.csv')
 # Remove irrelevant columns for the study
 to_remove = [	
 				'approxdate', 																			# Fecha estimada de ataque cuando no hay certeza
-				'extended', 'resolution',																# Indica si el incidente duro mas de 24 horas, y cuando acabo
 				'country', 'region', 																	# Codigos de pais y region
 				'summary', 																				# Texto descriptivo del incidente
 				'doubtterr', 																			# Si existe duda de que sean incidentes terroristas
@@ -50,14 +49,12 @@ to_remove = [
 				'INT_MISC', 'INT_ANY',																	# Flags si el incidente cae en las categorias internacional miscelaneo, o internacional cualquiera.
 			]
 
-# First column also gets removed as its just indexes
-df = df.iloc[:, 1:]
 df = df.loc[:, ~df.columns.isin(to_remove)]
 
 
 # Remove incidents:	1.	Ocurred before 1998
-#					2.	With day set as 0
-df = df[(df.iyear >= 1998) & (df.iday > 0)]
+#					2.	With day/month set as 0
+df = df[(df.iyear >= 1998) & (df.iday > 0) & (df.imonth > 0)]
 
 # Remove incidents ocurred within context of war
 df = df[df.crit3 != 0]
@@ -66,6 +63,18 @@ df = df.loc[:, df.columns!='crit3']
 # Merge iyear, imonth, iday column into a timestamp column within a timestamp format
 df['timestamp'] = df[['iyear', 'imonth', 'iday']].apply(lambda s: datetime.datetime(*s), axis=1)
 df = df.loc[:, ~df.columns.isin(['iyear', 'imonth', 'iday'])]
+
+# Merge extended, resolution columns into end_date and duration (days) column
+end_date  = pd.to_datetime(df['resolution'], format='%Y-%m-%d')
+df['end_date'] = np.where(pd.isnull(df['resolution']), df['timestamp'], end_date)
+df['duration'] = (df['end_date'] - df['timestamp']).apply(lambda s: s.days + 1)
+df = df.loc[:, ~df.columns.isin(['extended', 'resolution'])]
+
+# Shift the new columns to the left
+
+
+# Filter out incidents where duration has a non positive value
+df = df[df.duration > 0]
 
 # Merge property, propextent and propextent_txt columns into propdamage (interval for property damage cost) column
 # where:	# -1.	unknown
@@ -80,23 +89,34 @@ df['propdamage'] = np.where(df.propextent == 2, 2, df.propdamage)
 df['propdamage'] = np.where(df.propextent == 1, 3, df.propdamage)
 df = df.loc[:, ~df.columns.isin(['property', 'propextent', 'propextent_txt'])]
 
-# Reset indexes
+# Reset indexes and delete the newly generated index column, containing the old indexes
 df = df.reset_index()
+df = df.loc[:, df.columns!='index']
 
 # Remove deleted references from related column
 for i in range(len(df)):
 	related_incidents_str = df.at[i, 'related']
 	if pd.isna(related_incidents_str):
-		continue
+		df.at[i, 'related'] = ''
+	else:
+		related_incidents_initial = [int(event_id) for event_id in related_incidents_str.replace(' ', '').split(',')]
+		
+		related_incidents_final = []
+		for event_id in related_incidents_initial:
+			if event_id in df.eventid.values:
+				related_incidents_final.append(event_id)
 
-	related_incidents_initial = [int(event_id) for event_id in related_incidents_str.replace(' ', '').split(',')]
-	
-	related_incidents_final = []
-	for event_id in related_incidents_initial:
-		if event_id in df.eventid.values:
-			related_incidents_final.append(event_id)
+		df.at[i, 'related'] = ",".join([str(i) for i in related_incidents_final])
 
-	df.at[i, 'related'] = ", ".join([str(i) for i in related_incidents_final])
+# Add a n_related column, displaying how many related incidents for each incident there are
+n_related = np.where(df.related != '', df.related.apply(lambda s: len(s.split(','))), 0)
+df['n_related'] = n_related
+
+# Reorder columns
+df.insert(1, 'timestamp', df.pop('timestamp'))
+df.insert(2, 'end_date', df.pop('end_date'))
+df.insert(3, 'duration', df.pop('duration'))
+df.insert(55, 'propdamage', df.pop('propdamage'))
 
 # Save the cleaned dataframe
 df.to_csv('out.csv', index=False)
