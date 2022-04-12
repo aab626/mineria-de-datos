@@ -70,9 +70,6 @@ df['end_date'] = np.where(pd.isnull(df['resolution']), df['timestamp'], end_date
 df['duration'] = (df['end_date'] - df['timestamp']).apply(lambda s: s.days + 1)
 df = df.loc[:, ~df.columns.isin(['extended', 'resolution'])]
 
-# Shift the new columns to the left
-
-
 # Filter out incidents where duration has a non positive value
 df = df[df.duration > 0]
 
